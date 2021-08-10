@@ -1,0 +1,225 @@
+﻿@page "/"
+
+@using Blazor.Extensions
+@using Blazor.Extensions.Canvas
+@using Blazor.Extensions.Canvas.Canvas2D
+@using Models
+@using System
+
+@inject Elevated.Services.PlayerSettingsService PlayerSettings
+@inject Elevated.Services.GameService GameService
+
+@inject IJSRuntime JsRuntime;
+
+<div id="canvasHolder" style="position: fixed; width: 100%; height: 100%">
+    <BECanvas Width="600" Height="400" @ref="CanvasRef"></BECanvas>
+</div>
+
+@code {
+    private double height = 590;
+    private double width = 1000;
+
+    private double floorHeight = 0f;
+
+    private double ceilingGap = 0f;
+    private double elevatorWidth = 0f;
+
+    private int floorCount = 0;
+    private int elevatorCount = 0;
+
+    private Canvas2DContext ctx;
+    protected BECanvasComponent CanvasRef;
+    private DateTime LastRender;
+    public bool NeedsInit = true;
+    public bool isBusy = false;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        this.ctx = await CanvasRef.CreateCanvas2DAsync();
+        await JsRuntime.InvokeAsync<object>("initRenderJS", DotNetObjectReference.Create(this));
+        await base.OnInitializedAsync();
+    }
+
+    [JSInvokable]
+    public void ResizeInBlazor(double width, double height) => Resize(width, height);
+
+    [JSInvokable]
+    public async ValueTask Resize(double width, double height)
+    {
+        this.height = height;
+        this.width = width;
+
+        this.floorCount = Math.Abs(GameService.Settings.FloorCount);
+        this.elevatorCount = Math.Abs(GameService.Settings.FloorCount);
+        this.floorHeight = (this.height / Math.Abs(GameService.Settings.FloorCount)) * 0.8;
+        this.ceilingGap = this.height * 0.2;
+        this.elevatorWidth = this.width / Math.Abs(GameService.Settings.ElevatorCount) / 2;
+        await DrawScreen();
+    }
+    [JSInvokable]
+    public async ValueTask DrawScreen()
+    {
+        try
+        {
+            await this.ctx.BeginBatchAsync();
+            for (var x = 0; x < this.floorCount; x++)
+            {
+                await DrawFloor(x, this.floorCount);
+            }
+            for (var x = 0; x < this.elevatorCount; x++)
+            {
+                await DrawElevator(x, this.elevatorCount);
+            }
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine(e.Message);
+        }
+
+        await this.ctx.EndBatchAsync();
+    }
+
+    public async ValueTask ReDrawElevators()
+    {
+        try
+        {
+            await this.ctx.BeginBatchAsync();
+            for (var x = 0; x < this.elevatorCount; x++)
+            {
+                await DrawElevator(x, this.elevatorCount);
+            }
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine(e.Message);
+        }
+
+        await this.ctx.EndBatchAsync();
+    }
+    [JSInvokable]
+    public async ValueTask DrawFloor(int instanceLevel, int ofCount)
+    {
+        await this.ctx.ClearRectAsync(10, this.ceilingGap + (this.floorHeight * instanceLevel), this.width, this.floorHeight -
+        10);
+        await this.ctx.SetFillStyleAsync("blue");
+        await this.ctx.FillRectAsync(10, this.ceilingGap + (this.floorHeight * instanceLevel), this.width, this.floorHeight -
+        10);
+        await this.ctx.FillAsync();
+    }
+    [JSInvokable]
+    public async ValueTask DrawElevator(int instanceNumber, int ofCount)
+    {
+        var elevatorSpace = this.elevatorWidth / 3;
+        var elevatorHeight = this.floorHeight * 0.65;
+        var elevatorX = (this.elevatorWidth + elevatorSpace) * (instanceNumber + 1.5) + elevatorSpace;
+
+        var elevator = this.GameService.Elevators.FirstOrDefault(rs => rs.ElevatorId == instanceNumber + 1);
+        if (elevator.CurrentFloor != elevator.DesiredFloor)
+        {
+            if (elevator.CurrentFloor > elevator.DesiredFloor)
+            {
+                await MoveElevatorDownFloor(elevator, 1, instanceNumber, ofCount);
+            }
+            else
+            {
+                await MoveElevatorUpFloor(elevator, 1, instanceNumber, ofCount);
+            }
+            // await MoveElevatorDownFloor(elevator, 2, instanceNumber, ofCount);
+            // await MoveElevatorUpFloor(elevator, 3, instanceNumber, ofCount);
+        }
+
+        await this.ctx.ClearRectAsync(elevatorX, (this.floorHeight * (ofCount - elevator.CurrentFloor)) + this.ceilingGap -
+        this.floorHeight + 3,
+        elevatorWidth, elevatorHeight);
+        await this.ctx.SetFillStyleAsync(elevator.Color);
+        await this.ctx.FillRectAsync(elevatorX, (this.floorHeight * (ofCount - elevator.CurrentFloor)) + this.ceilingGap -
+        this.floorHeight + 3,
+        elevatorWidth, elevatorHeight);
+        await this.ctx.FillAsync();
+    }
+
+
+    [JSInvokable]
+    public async ValueTask MoveElevatorDownFloor(Elevator elevator, int floorCount, int instanceNumber, int ofCount)
+    {
+        Console.WriteLine($"Move down {floorCount} floor(s)");
+        while (floorCount != 0)
+        {
+            floorCount -= 1;
+
+            var elevatorSpace = this.elevatorWidth / 3;
+            var elevatorHeight = this.floorHeight * 0.65;
+            var elevatorX = (this.elevatorWidth + elevatorSpace) * (instanceNumber + 1.5) + elevatorSpace;
+
+            elevator.CurrentFloor -= 1;
+
+            await this.ctx.ClearRectAsync(elevatorX, (this.floorHeight * (ofCount - elevator.CurrentFloor)) + this.ceilingGap -
+            this.floorHeight + 3,
+            elevatorWidth, elevatorHeight);
+            await this.ctx.SetFillStyleAsync(elevator.Color);
+            await this.ctx.FillRectAsync(elevatorX, (this.floorHeight * (ofCount - elevator.CurrentFloor)) + this.ceilingGap -
+            this.floorHeight + 3,
+            elevatorWidth, elevatorHeight);
+            await this.ctx.FillAsync();
+        }
+    }
+
+
+    [JSInvokable]
+    public async ValueTask MoveElevatorUpFloor(Elevator elevator, int floorCount, int instanceNumber, int ofCount)
+    {
+        Console.WriteLine($"Move up {floorCount} floor(s)");
+        while (floorCount != 0)
+        {
+            floorCount -= 1;
+
+            var elevatorSpace = this.elevatorWidth / 3;
+            var elevatorHeight = this.floorHeight * 0.65;
+            var elevatorX = (this.elevatorWidth + elevatorSpace) * (instanceNumber + 1.5) + elevatorSpace;
+
+            elevator.CurrentFloor += 1;
+
+            await this.ctx.ClearRectAsync(elevatorX, (this.floorHeight * (ofCount - elevator.CurrentFloor)) + this.ceilingGap -
+            this.floorHeight + 3,
+            elevatorWidth, elevatorHeight);
+            await this.ctx.SetFillStyleAsync("green");
+            await this.ctx.FillRectAsync(elevatorX, (this.floorHeight * (ofCount - elevator.CurrentFloor)) + this.ceilingGap -
+            this.floorHeight + 3,
+            elevatorWidth, elevatorHeight);
+            await this.ctx.FillAsync();
+        }
+    }
+
+    [JSInvokable]
+    public async ValueTask RenderInBlazor(float timeStamp)
+    {
+        if (!this.isBusy)
+        {
+            this.isBusy = true;
+            if (NeedsInit)
+            {
+                await DrawScreen();
+
+                NeedsInit = false;
+            }
+            else
+            {
+                await AnimateElevators();
+                await DrawScreen();
+                await Task.Delay(1000);
+            }
+            this.isBusy = false;
+        }
+    }
+
+    [JSInvokable]
+    public async ValueTask AnimateElevators()
+    {
+        var rand = new Random();
+
+        for (var x = 0; x < this.elevatorCount - 1; x++)
+        {
+            this.GameService.Elevators.FirstOrDefault(rs => rs.ElevatorId == x + 1).DesiredFloor = rand.Next(1, this.floorCount);
+        }
+    }
+}
